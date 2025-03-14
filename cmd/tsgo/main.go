@@ -256,6 +256,7 @@ func main() {
 	var stats table
 
 	stats.add("Files", len(program.SourceFiles()))
+	stats.add("Zach's Stat", program.ZCount())
 	stats.add("Types", program.TypeCount())
 	stats.add("Parse time", parseTime)
 	if bindTime != 0 {

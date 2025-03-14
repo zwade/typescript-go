@@ -534,6 +534,7 @@ type Checker struct {
 	totalInstantiationCount                   uint32
 	instantiationCount                        uint32
 	instantiationDepth                        uint32
+	ZCacheMissCount                           uint32
 	inlineLevel                               int
 	currentNode                               *ast.Node
 	varianceTypeParameter                     *Type
@@ -807,6 +808,8 @@ type Checker struct {
 
 func NewChecker(program Program) *Checker {
 	c := &Checker{}
+	c.ZCacheMissCount = 0
+
 	c.id = nextCheckerID.Add(1)
 	c.program = program
 	// c.host = program.host
@@ -20240,13 +20243,7 @@ func (c *Checker) instantiateTypeWithAlias(t *Type, m *TypeMapper, alias *TypeAl
 	if t == nil || m == nil || !c.couldContainTypeVariables(t) {
 		return t
 	}
-	if c.instantiationDepth == 100 || c.instantiationCount >= 5_000_000 {
-		// We have reached 100 recursive type instantiations, or 5M type instantiations caused by the same statement
-		// or expression. There is a very high likelyhood we're dealing with a combination of infinite generic types
-		// that perpetually generate new type identities, so we stop the recursion here by yielding the error type.
-		c.error(c.currentNode, diagnostics.Type_instantiation_is_excessively_deep_and_possibly_infinite)
-		return c.errorType
-	}
+
 	c.totalInstantiationCount++
 	c.instantiationCount++
 	c.instantiationDepth++
@@ -20259,13 +20256,47 @@ func (c *Checker) instantiateTypeWithAlias(t *Type, m *TypeMapper, alias *TypeAl
 // we perform type inference (i.e. a type parameter of a generic function). We cache
 // results for union and intersection types for performance reasons.
 func (c *Checker) couldContainTypeVariablesWorker(t *Type) bool {
+	objectFlags := t.objectFlags
+
+	// result2 := t.flags&TypeFlagsInstantiable != 0 ||
+	// 	t.flags&TypeFlagsObject != 0 && !c.isNonGenericTopLevelType(t) && (objectFlags&ObjectFlagsReference != 0 && (t.AsTypeReference().node != nil || core.Some(c.getTypeArguments(t), c.couldContainTypeVariables)) ||
+	// 		objectFlags&ObjectFlagsSingleSignatureType != 0 && len(t.AsSingleSignatureType().outerTypeParameters) != 0 ||
+	// 		objectFlags&ObjectFlagsAnonymous != 0 && t.symbol != nil && t.symbol.Flags&(ast.SymbolFlagsFunction|ast.SymbolFlagsMethod|ast.SymbolFlagsClass|ast.SymbolFlagsTypeLiteral|ast.SymbolFlagsObjectLiteral) != 0 && t.symbol.Declarations != nil ||
+	// 		objectFlags&(ObjectFlagsMapped|ObjectFlagsReverseMapped|ObjectFlagsObjectRestType|ObjectFlagsInstantiationExpressionType) != 0) ||
+	// 	t.flags&TypeFlagsUnionOrIntersection != 0 && t.flags&TypeFlagsEnumLiteral == 0 && !c.isNonGenericTopLevelType(t) && core.Some(t.Types(), c.couldContainTypeVariables)
+
+	// fmt.Println("May contain variables", c.TypeToString(t))
+	// fmt.Println("Flags", t.flags)
+	// fmt.Println("ObjectFlags", objectFlags)
+	// fmt.Println("Result", result2)
+	// if t.symbol != nil {
+	// 	fmt.Println("symbolDeclarations", t.symbol.Declarations != nil)
+	// }
+
+	// fmt.Println("Get Type Arguments", result2)
+
+	// fmt.Println("Condition A", t.flags&TypeFlagsInstantiable != 0)
+
+	// cond := t.flags&TypeFlagsObject != 0 && !c.isNonGenericTopLevelType(t)
+	// fmt.Println("Cond", cond)
+
+	// if cond {
+	// 	fmt.Println("Condition B", objectFlags&ObjectFlagsReference != 0 && (t.AsTypeReference().node != nil || core.Some(c.getTypeArguments(t), c.couldContainTypeVariables)))
+	// 	fmt.Println("Condition C", objectFlags&ObjectFlagsSingleSignatureType != 0 && len(t.AsSingleSignatureType().outerTypeParameters) != 0)
+	// 	fmt.Println("Condition D", objectFlags&ObjectFlagsAnonymous != 0 && t.symbol != nil && t.symbol.Flags&(ast.SymbolFlagsFunction|ast.SymbolFlagsMethod|ast.SymbolFlagsClass|ast.SymbolFlagsTypeLiteral|ast.SymbolFlagsObjectLiteral) != 0 && t.symbol.Declarations != nil)
+	// 	fmt.Println("Condition E", objectFlags&(ObjectFlagsMapped|ObjectFlagsReverseMapped|ObjectFlagsObjectRestType|ObjectFlagsInstantiationExpressionType) != 0)
+	// }
+
+	// fmt.Println("Condition F", t.flags&TypeFlagsUnionOrIntersection != 0 && t.flags&TypeFlagsEnumLiteral == 0 && !c.isNonGenericTopLevelType(t) && core.Some(t.Types(), c.couldContainTypeVariables))
+
 	if t.flags&TypeFlagsStructuredOrInstantiable == 0 {
 		return false
 	}
-	objectFlags := t.objectFlags
+
 	if objectFlags&ObjectFlagsCouldContainTypeVariablesComputed != 0 {
 		return objectFlags&ObjectFlagsCouldContainTypeVariables != 0
 	}
+
 	result := t.flags&TypeFlagsInstantiable != 0 ||
 		t.flags&TypeFlagsObject != 0 && !c.isNonGenericTopLevelType(t) && (objectFlags&ObjectFlagsReference != 0 && (t.AsTypeReference().node != nil || core.Some(c.getTypeArguments(t), c.couldContainTypeVariables)) ||
 			objectFlags&ObjectFlagsSingleSignatureType != 0 && len(t.AsSingleSignatureType().outerTypeParameters) != 0 ||
@@ -20273,6 +20304,7 @@ func (c *Checker) couldContainTypeVariablesWorker(t *Type) bool {
 			objectFlags&(ObjectFlagsMapped|ObjectFlagsReverseMapped|ObjectFlagsObjectRestType|ObjectFlagsInstantiationExpressionType) != 0) ||
 		t.flags&TypeFlagsUnionOrIntersection != 0 && t.flags&TypeFlagsEnumLiteral == 0 && !c.isNonGenericTopLevelType(t) && core.Some(t.Types(), c.couldContainTypeVariables)
 	t.objectFlags |= ObjectFlagsCouldContainTypeVariablesComputed | core.IfElse(result, ObjectFlagsCouldContainTypeVariables, 0)
+
 	return result
 }
 
@@ -20303,14 +20335,17 @@ func (c *Checker) instantiateTypeWorker(t *Type, m *TypeMapper, alias *TypeAlias
 			if objectFlags&ObjectFlagsReference != 0 && t.AsTypeReference().node == nil {
 				resolvedTypeArguments := t.AsTypeReference().resolvedTypeArguments
 				newTypeArguments := c.instantiateTypes(resolvedTypeArguments, m)
+
 				if core.Same(newTypeArguments, resolvedTypeArguments) {
 					return t
 				}
+
 				return c.createNormalizedTypeReference(t.Target(), newTypeArguments)
 			}
 			if objectFlags&ObjectFlagsReverseMapped != 0 {
 				return c.instantiateReverseMappedType(t, m)
 			}
+
 			return c.getObjectTypeInstantiation(t, m, alias)
 		}
 		return t
@@ -20430,10 +20465,39 @@ func (c *Checker) getObjectTypeInstantiation(t *Type, m *TypeMapper, alias *Type
 	if len(typeParameters) == 0 {
 		return t
 	}
+
+	// fmt.Println("=====")
+	// fmt.Println(c.TypeToString(t))
+	// fmt.Println(scanner.GetTextOfNode(declaration))
+
+	combinedMapper := c.combineTypeMappers(t.Mapper(), m)
+	// if scanner.GetTextOfNode(declaration) == "{ kind: \"fn-header\", args: [Arg] }" {
+	// 	for _, tp := range typeParameters {
+	// 		fmt.Println("-----")
+	// 		fmt.Println(c.TypeToString(tp))
+
+	// 		if m != nil {
+	// 			fmt.Println(c.TypeToString(m.Map(tp)))
+	// 		} else {
+	// 			fmt.Println("m nil")
+	// 		}
+
+	// 		if t.Mapper() != nil {
+	// 			fmt.Println(c.TypeToString(t.Mapper().Map(tp)))
+	// 		} else {
+	// 			fmt.Println("t.Mapper() nil")
+	// 		}
+	// 	}
+	// }
+
+	// for _, tt := range typeParameters {
+	// 	fmt.Println("------")
+	// 	fmt.Println(c.TypeToString(tt))
+	// }
+
 	// We are instantiating an anonymous type that has one or more type parameters in scope. Apply the
 	// mapper to the type parameters to produce the effective list of type arguments, and compute the
 	// instantiation cache key from the type IDs of the type arguments.
-	combinedMapper := c.combineTypeMappers(t.Mapper(), m)
 	typeArguments := make([]*Type, len(typeParameters))
 	for i, tp := range typeParameters {
 		typeArguments[i] = combinedMapper.Map(tp)
@@ -20465,6 +20529,21 @@ func (c *Checker) getObjectTypeInstantiation(t *Type, m *TypeMapper, alias *Type
 			result = c.instantiateAnonymousType(target, newMapper, newAlias)
 		}
 		data.instantiations[key] = result
+
+		if (result.flags&TypeFlagsObjectFlagsType != 0) && (result.objectFlags&ObjectFlagsCouldContainTypeVariablesComputed == 0) {
+			resultCouldContainObjectFlags := core.Some(typeArguments, c.couldContainTypeVariables)
+
+			if result.objectFlags&(ObjectFlagsMapped|ObjectFlagsAnonymous|ObjectFlagsReference) != 0 {
+				// fmt.Println("Caching Flag", c.TypeToString(result))
+				result.objectFlags |= ObjectFlagsCouldContainTypeVariablesComputed | core.IfElse(resultCouldContainObjectFlags, ObjectFlagsCouldContainTypeVariables, 0)
+			} else {
+				if !resultCouldContainObjectFlags {
+					// fmt.Println("Caching Flag", c.TypeToString(result))
+				}
+
+				result.objectFlags |= core.IfElse(!resultCouldContainObjectFlags, ObjectFlagsCouldContainTypeVariablesComputed, 0)
+			}
+		}
 	}
 	return result
 }
@@ -22279,10 +22358,6 @@ func (c *Checker) getConditionalType(root *ConditionalRoot, mapper *TypeMapper, 
 	// another (or, through recursion, possibly the same) conditional type. In the potentially tail-recursive
 	// cases we increment the tail recursion counter and stop after 1000 iterations.
 	for {
-		if tailCount == 1000 {
-			c.error(c.currentNode, diagnostics.Type_instantiation_is_excessively_deep_and_possibly_infinite)
-			return c.errorType
-		}
 		checkType := c.instantiateType(c.getActualTypeVariable(root.checkType), mapper)
 		extendsType := c.instantiateType(root.extendsType, mapper)
 		if checkType == c.errorType || extendsType == c.errorType {

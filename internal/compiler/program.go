@@ -398,6 +398,15 @@ func (p *Program) TypeCount() int {
 	return count
 }
 
+func (p *Program) ZCount() int {
+	var count int
+	for _, checker := range p.checkers {
+		count += int(checker.ZCacheMissCount)
+	}
+
+	return count
+}
+
 func (p *Program) PrintSourceFileWithTypes() {
 	for _, file := range p.files {
 		if tspath.GetBaseFileName(file.FileName()) == "main.ts" {
