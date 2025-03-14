@@ -20451,6 +20451,16 @@ func (c *Checker) getObjectTypeInstantiation(t *Type, m *TypeMapper, alias *Type
 			result = c.instantiateAnonymousType(target, newMapper, newAlias)
 		}
 		data.instantiations[key] = result
+
+		if (result.flags&TypeFlagsObjectFlagsType != 0) && (result.objectFlags&ObjectFlagsCouldContainTypeVariablesComputed == 0) {
+			resultCouldContainObjectFlags := core.Some(typeArguments, c.couldContainTypeVariables)
+
+			if result.objectFlags&(ObjectFlagsMapped|ObjectFlagsAnonymous|ObjectFlagsReference) != 0 {
+				result.objectFlags |= ObjectFlagsCouldContainTypeVariablesComputed | core.IfElse(resultCouldContainObjectFlags, ObjectFlagsCouldContainTypeVariables, 0)
+			} else {
+				result.objectFlags |= core.IfElse(!resultCouldContainObjectFlags, ObjectFlagsCouldContainTypeVariablesComputed, 0)
+			}
+		}
 	}
 	return result
 }
