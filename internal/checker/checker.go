@@ -20226,13 +20226,13 @@ func (c *Checker) instantiateTypeWithAlias(t *Type, m *TypeMapper, alias *TypeAl
 	if t == nil || m == nil || !c.couldContainTypeVariables(t) {
 		return t
 	}
-	if c.instantiationDepth == 100 || c.instantiationCount >= 5_000_000 {
-		// We have reached 100 recursive type instantiations, or 5M type instantiations caused by the same statement
-		// or expression. There is a very high likelyhood we're dealing with a combination of infinite generic types
-		// that perpetually generate new type identities, so we stop the recursion here by yielding the error type.
-		c.error(c.currentNode, diagnostics.Type_instantiation_is_excessively_deep_and_possibly_infinite)
-		return c.errorType
-	}
+	// if c.instantiationDepth == 100 || c.instantiationCount >= 5_000_000 {
+	// 	// We have reached 100 recursive type instantiations, or 5M type instantiations caused by the same statement
+	// 	// or expression. There is a very high likelyhood we're dealing with a combination of infinite generic types
+	// 	// that perpetually generate new type identities, so we stop the recursion here by yielding the error type.
+	// 	c.error(c.currentNode, diagnostics.Type_instantiation_is_excessively_deep_and_possibly_infinite)
+	// 	return c.errorType
+	// }
 	c.totalInstantiationCount++
 	c.instantiationCount++
 	c.instantiationDepth++
@@ -22275,10 +22275,10 @@ func (c *Checker) getConditionalType(root *ConditionalRoot, mapper *TypeMapper, 
 	// another (or, through recursion, possibly the same) conditional type. In the potentially tail-recursive
 	// cases we increment the tail recursion counter and stop after 1000 iterations.
 	for {
-		if tailCount == 1000 {
-			c.error(c.currentNode, diagnostics.Type_instantiation_is_excessively_deep_and_possibly_infinite)
-			return c.errorType
-		}
+		// if tailCount == 1000 {
+		// 	c.error(c.currentNode, diagnostics.Type_instantiation_is_excessively_deep_and_possibly_infinite)
+		// 	return c.errorType
+		// }
 		checkType := c.instantiateType(c.getActualTypeVariable(root.checkType), mapper)
 		extendsType := c.instantiateType(root.extendsType, mapper)
 		if checkType == c.errorType || extendsType == c.errorType {
